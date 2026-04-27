@@ -1,0 +1,11 @@
+{
+  "id": "SpeedX",
+  "name": "皮皮极速: SpeedX",
+  "author": "皮一下就很凡@Bilibili",
+  "description": "皮皮极速 — 最高20倍速！跳过动画/横幅、自动结束回合、自动拾取、自动前进，按F9自定义一切。 | Up to 20x speed! Auto-end turn, auto-loot, auto-proceed, skip animations. F9 to customize.",
+  "version": "0.10.9",
+  "has_pck": true,
+  "has_dll": true,
+  "dependencies": [],
+  "affects_gameplay": false
+}
