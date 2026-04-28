@@ -1,0 +1,61 @@
+name: Release mods
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Package repository
+        id: package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $repoRoot = $env:GITHUB_WORKSPACE
+          $stageRoot = Join-Path $env:RUNNER_TEMP 'mods-package'
+          $artifactRoot = Join-Path $env:RUNNER_TEMP 'mods-artifact'
+          $zipPath = Join-Path $artifactRoot 'mods.zip'
+
+          foreach ($path in @($stageRoot, $artifactRoot)) {
+            if (Test-Path $path) {
+              Remove-Item -Path $path -Recurse -Force
+            }
+          }
+
+          New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
+          New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
+
+          Get-ChildItem -Path $repoRoot -Force | Where-Object {
+            $_.Name -notin @('.git', '.github')
+          } | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination (Join-Path $stageRoot $_.Name) -Recurse -Force
+          }
+
+          $items = Get-ChildItem -Path $stageRoot -Force
+          if (-not $items) {
+            throw 'The package directory is empty.'
+          }
+
+          Compress-Archive -Path $items.FullName -DestinationPath $zipPath -Force
+          "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: auto-${{ github.run_id }}-${{ github.sha }}
+          name: Auto Release #${{ github.run_number }}
+          body: |
+            Automated release for commit ${{ github.sha }}.
+          files: ${{ steps.package.outputs.zip_path }}
