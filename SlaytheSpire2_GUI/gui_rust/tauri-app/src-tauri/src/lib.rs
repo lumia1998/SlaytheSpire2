@@ -1,8 +1,10 @@
 mod commands;
 
 use commands::{
-    backup_mods, cleanup_stale_temp, delete_backup, detect_game_directory, download_mods,
-    extract_mods, has_backup, list_backups, open_directory, resolve_download_url, restore_mods,
+    add_common_mod, backup_mods, cleanup_stale_temp, delete_backup, delete_common_mod,
+    detect_game_directory, download_mods, extract_mods, has_backup, has_mods_directory,
+    list_backups, list_common_mods, open_common_mods_directory, open_directory,
+    resolve_download_url, restore_mods, sync_mods,
 };
 use tauri::Manager;
 
@@ -24,13 +26,19 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             detect_game_directory,
             has_backup,
+            has_mods_directory,
             backup_mods,
             download_mods,
             extract_mods,
             resolve_download_url,
+            sync_mods,
             restore_mods,
             open_directory,
             list_backups,
+            list_common_mods,
+            add_common_mod,
+            delete_common_mod,
+            open_common_mods_directory,
             delete_backup,
             cleanup_stale_temp,
         ])

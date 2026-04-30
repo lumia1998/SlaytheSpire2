@@ -24,8 +24,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
 
           $repoRoot = $env:GITHUB_WORKSPACE
-          $guiRoot = Join-Path $repoRoot 'SlaytheSpire2_GUI/gui_rust/tauri-app/src-tauri'
-          $binaryPath = Join-Path $guiRoot 'target/release/slay-the-spire-2-mod-manager.exe'
+          $appRoot = Join-Path $repoRoot 'SlaytheSpire2_GUI/gui_rust/tauri-app'
+          $binaryPath = Join-Path $appRoot 'src-tauri/target/release/slay-the-spire-2-mod-manager.exe'
           $artifactRoot = Join-Path $env:RUNNER_TEMP 'mods-artifact'
           $exePath = Join-Path $artifactRoot 'SlayTheSpire2ModManager.exe'
 
@@ -34,9 +34,10 @@ jobs:
           }
           New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
 
-          Push-Location $guiRoot
+          Push-Location $appRoot
           try {
-            cargo build --release
+            cargo install tauri-cli --version '^2' --locked
+            cargo tauri build --no-bundle
           }
           finally {
             Pop-Location

@@ -22,9 +22,12 @@ const elements = {
   syncButtonGrid: document.getElementById('syncButtonGrid'),
   refreshBackupsButton: document.getElementById('refreshBackupsButton'),
   backupList: document.getElementById('backupList'),
-  downloadStatus: document.getElementById('downloadStatus'),
   linkGithub: document.getElementById('linkGithub'),
   linkIssue: document.getElementById('linkIssue'),
+  openCommonModsButton: document.getElementById('openCommonModsButton'),
+  addCommonModButton: document.getElementById('addCommonModButton'),
+  refreshCommonModsButton: document.getElementById('refreshCommonModsButton'),
+  commonModsList: document.getElementById('commonModsList'),
 };
 
 let repos = loadRepos();
@@ -45,6 +48,9 @@ function initNavigation() {
       if (pageId === 'mods') {
         renderSyncButtons();
         refreshBackupList();
+      }
+      if (pageId === 'settings') {
+        refreshCommonModsList();
       }
     });
   });
@@ -278,36 +284,68 @@ async function refreshBackupList() {
   }
 }
 
-// ── Download Progress ──
+// ── Render: Common Mods List ──
 
-function updateDownloadUI(data) {
-  currentDownload = data;
-  const container = elements.downloadStatus;
-
-  if (!data || data.phase === 'done') {
-    currentDownload = null;
-    container.innerHTML = '<p class="empty-state">当前没有下载任务</p>';
+async function refreshCommonModsList() {
+  let gameDirectory;
+  try {
+    gameDirectory = getGameDirectory();
+  } catch {
+    elements.commonModsList.innerHTML = '<p class="backup-empty">请先设置游戏目录</p>';
     return;
   }
 
-  const phaseText = {
-    downloading: '下载中...',
-    extracting: '解压中...',
-    error: '下载失败',
-  };
+  try {
+    const invoke = getInvoke();
+    const mods = await invoke('list_common_mods', { gameDirectory });
+    elements.commonModsList.innerHTML = '';
 
-  const percent = data.total > 0 ? Math.min(100, Math.round((data.downloaded / data.total) * 100)) : 0;
-  const percentStr = data.total > 0 ? `${percent}%` : '';
-  const fillWidth = data.total > 0 ? `${percent}%` : '0%';
+    if (mods.length === 0) {
+      elements.commonModsList.innerHTML = '<p class="backup-empty">暂无公共模组，可手动放入 mods_common 或从当前 mods 添加</p>';
+      return;
+    }
 
-  container.innerHTML = `
-    <div class="download-task">
-      <div class="download-task-label">${data.label || 'mods.zip'}</div>
-      <div class="download-task-phase">${phaseText[data.phase] || data.phase}</div>
-      <div class="progress-bar"><div class="progress-bar-fill" style="width:${fillWidth}"></div></div>
-      <div class="download-task-percent">${percentStr}${data.total > 0 ? ' (' + formatSize(data.downloaded) + ' / ' + formatSize(data.total) + ')' : ''}</div>
-    </div>
-  `;
+    mods.forEach((mod) => {
+      const item = document.createElement('div');
+      item.className = 'backup-item';
+
+      const info = document.createElement('span');
+      info.innerHTML = `<span class="backup-item-name">${mod.name}</span><span class="backup-item-size">${formatSize(mod.size_bytes)}</span>`;
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'backup-item-delete';
+      deleteBtn.textContent = '删除';
+      deleteBtn.addEventListener('click', async () => {
+        if (!window.confirm(`确定删除公共模组 ${mod.name}？`)) return;
+        try {
+          await invoke('delete_common_mod', { gameDirectory, modName: mod.name });
+          appendLog(`[公共模组] 已删除：${mod.name}`);
+          refreshCommonModsList();
+        } catch (error) {
+          appendLog(`[错误] ${error instanceof Error ? error.message : String(error)}`);
+        }
+      });
+
+      item.appendChild(info);
+      item.appendChild(deleteBtn);
+      elements.commonModsList.appendChild(item);
+    });
+  } catch (error) {
+    elements.commonModsList.innerHTML = '<p class="backup-empty">加载失败</p>';
+  }
+}
+
+
+
+// ── Download Progress ──
+
+function updateDownloadState(data) {
+  currentDownload = data;
+
+  if (!data || data.phase === 'done') {
+    currentDownload = null;
+  }
 }
 
 function listenDownloadProgress() {
@@ -315,7 +353,7 @@ function listenDownloadProgress() {
   tauriEvent.listen('download-progress', (event) => {
     const payload = event.payload;
     if (payload) {
-      updateDownloadUI({ ...payload, label: currentDownload?.label || 'mods.zip' });
+      updateDownloadState({ ...payload, label: currentDownload?.label || 'mods.zip' });
     }
   });
 }
@@ -350,23 +388,22 @@ async function handleSync(repo, button) {
       return;
     }
 
-    appendLog(`[同步] ${label}：正在解析下载地址...`);
-    const downloadUrl = await invoke('resolve_download_url', { url });
+    const modsExists = await invoke('has_mods_directory', { gameDirectory });
+    if (modsExists && !window.confirm('检测到本地已有备份和模组，是否要再次同步？\n\n注意！当前模组会被覆盖。')) {
+      appendLog(`[同步] ${label}：已取消同步。`);
+      return;
+    }
 
-    currentDownload = { label, phase: 'downloading', downloaded: 0, total: 0 };
-    updateDownloadUI(currentDownload);
+    appendLog(`[同步] ${label}：正在解析、下载并替换...`);
+    currentDownload = { label, phase: 'resolving', downloaded: 0, total: 0 };
+    updateDownloadState(currentDownload);
 
-    appendLog(`[同步] ${label}：正在下载 mods.zip...`);
-    await invoke('download_mods', { gameDirectory, downloadUrl });
+    await invoke('sync_mods', { gameDirectory, url });
 
-    updateDownloadUI({ label, phase: 'extracting', downloaded: 0, total: 0 });
-    appendLog(`[同步] ${label}：下载完成，正在解压并替换...`);
-    await invoke('extract_mods', { gameDirectory });
-
-    updateDownloadUI({ phase: 'done' });
-    appendLog(`[同步] ${label}：同步完成。`);
+    updateDownloadState({ phase: 'done' });
+    appendLog(`[同步] ${label}：同步完成，已应用公共模组。`);
   } catch (error) {
-    updateDownloadUI({ phase: 'done' });
+    updateDownloadState({ phase: 'done' });
     appendLog(`[错误] ${label}：${error instanceof Error ? error.message : String(error)}`);
   } finally {
     setButtonBusy(button, false);
@@ -464,6 +501,55 @@ async function handleOpenDirectory() {
   }
 }
 
+async function handleOpenCommonModsDirectory() {
+  let gameDirectory;
+  try {
+    gameDirectory = getGameDirectory();
+  } catch (error) {
+    appendLog(`[错误] ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+
+  try {
+    const invoke = getInvoke();
+    await invoke('open_common_mods_directory', { gameDirectory });
+    refreshCommonModsList();
+  } catch (error) {
+    appendLog(`[错误] ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function handleAddCommonMod() {
+  let gameDirectory;
+  try {
+    gameDirectory = getGameDirectory();
+  } catch (error) {
+    appendLog(`[错误] ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+
+  try {
+    const open = getOpenDialog();
+    const selected = await open({ directory: true, title: '选择当前 mods 中要加入公共模组的文件夹' });
+    if (!selected) {
+      appendLog('[公共模组] 已取消选择。');
+      return;
+    }
+    const sourcePath = Array.isArray(selected) ? selected[0] : selected;
+    if (!sourcePath) {
+      appendLog('[公共模组] 已取消选择。');
+      return;
+    }
+
+    const invoke = getInvoke();
+    const name = await invoke('add_common_mod', { gameDirectory, sourcePath });
+    appendLog(`[公共模组] 已添加：${name}`);
+    refreshCommonModsList();
+  } catch (error) {
+    appendLog(`[错误] ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 async function cleanupStaleTemp(gameDirectory) {
   try {
     const invoke = getInvoke();
@@ -528,6 +614,9 @@ function bindEvents() {
   elements.refreshBackupsButton.addEventListener('click', refreshBackupList);
   elements.pathInput.addEventListener('change', () => saveGameDirectory(elements.pathInput.value));
   elements.pathInput.addEventListener('blur', () => saveGameDirectory(elements.pathInput.value));
+  elements.openCommonModsButton.addEventListener('click', handleOpenCommonModsDirectory);
+  elements.addCommonModButton.addEventListener('click', handleAddCommonMod);
+  elements.refreshCommonModsButton.addEventListener('click', refreshCommonModsList);
   elements.addRepoButton.addEventListener('click', () => {
     repos.push({ note: '', url: '' });
     saveRepos();
@@ -544,4 +633,5 @@ window.addEventListener('DOMContentLoaded', async () => {
   renderSyncButtons();
   await detectGameDirectoryOnStartup();
   refreshBackupList();
+  refreshCommonModsList();
 });

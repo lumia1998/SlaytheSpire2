@@ -451,7 +451,22 @@ button {
   border-color: rgba(239, 68, 68, 0.2);
 }
 
-/* ── Log ── */
+.common-mods-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.common-mods-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+
 
 .log-card {
   padding: 16px 24px 20px;
