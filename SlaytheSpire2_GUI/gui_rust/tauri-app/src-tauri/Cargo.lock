@@ -3948,7 +3948,6 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
- "tempfile",
  "window-vibrancy 0.5.3",
  "zip",
 ]

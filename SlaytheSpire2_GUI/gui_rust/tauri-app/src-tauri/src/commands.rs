@@ -1,13 +1,13 @@
 use reqwest::blocking::Client;
-use reqwest::header::ACCEPT;
+use reqwest::header::{ACCEPT, CONTENT_LENGTH};
 use reqwest::Url;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
-use std::io::{self, copy};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime};
-use tempfile::tempdir;
+use tauri::Emitter;
 use zip::ZipArchive;
 
 const GAME_FOLDER_NAME: &str = "Slay the Spire 2";
@@ -22,7 +22,9 @@ const DOWNLOAD_ARCHIVE_NAME: &str = "mods.zip";
 const BACKUP_DIR_PREFIX: &str = "mods_backup_";
 const MODS_DIR_NAME: &str = "mods";
 const USER_AGENT: &str = "sts2-mod-sync/1.0";
-const REQUEST_TIMEOUT_SECS: u64 = 15;
+const API_TIMEOUT_SECS: u64 = 15;
+const DOWNLOAD_TIMEOUT_SECS: u64 = 120;
+const CONNECT_TIMEOUT_SECS: u64 = 8;
 
 const GITHUB_API_MIRRORS: [&str; 2] = [
     "https://api.github.com",
@@ -44,6 +46,19 @@ struct ReleaseResponse {
 struct ReleaseAsset {
     name: String,
     browser_download_url: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct DownloadProgress {
+    pub downloaded: u64,
+    pub total: u64,
+    pub phase: String,
+}
+
+#[derive(Serialize)]
+pub struct BackupInfo {
+    pub name: String,
+    pub size_bytes: u64,
 }
 
 fn ensure_game_directory(game_directory: &str) -> Result<PathBuf, String> {
@@ -77,42 +92,6 @@ fn remove_path_if_exists(path: &Path) -> Result<(), String> {
     }
 }
 
-fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), String> {
-    fs::create_dir_all(target).map_err(|error| {
-        format!("创建目录失败：{}（{}）", path_to_string(target), error)
-    })?;
-
-    for entry in fs::read_dir(source)
-        .map_err(|error| format!("读取目录失败：{}（{}）", path_to_string(source), error))?
-    {
-        let entry = entry.map_err(|error| {
-            format!("读取目录项失败：{}（{}）", path_to_string(source), error)
-        })?;
-        let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
-
-        if source_path.is_dir() {
-            copy_dir_recursive(&source_path, &target_path)?;
-        } else {
-            if let Some(parent) = target_path.parent() {
-                fs::create_dir_all(parent).map_err(|error| {
-                    format!("创建目录失败：{}（{}）", path_to_string(parent), error)
-                })?;
-            }
-            fs::copy(&source_path, &target_path).map_err(|error| {
-                format!(
-                    "复制文件失败：{} -> {}（{}）",
-                    path_to_string(&source_path),
-                    path_to_string(&target_path),
-                    error
-                )
-            })?;
-        }
-    }
-
-    Ok(())
-}
-
 fn parse_repository_url(repository_url: &str) -> Result<(String, String), String> {
     let url = Url::parse(repository_url.trim()).map_err(|_| "仓库地址格式不正确。".to_string())?;
 
@@ -137,16 +116,26 @@ fn parse_repository_url(repository_url: &str) -> Result<(String, String), String
     Ok((parts[0].to_string(), parts[1].to_string()))
 }
 
-fn build_http_client() -> Result<Client, String> {
+fn build_api_client() -> Result<Client, String> {
     Client::builder()
-        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(API_TIMEOUT_SECS))
+        .user_agent(USER_AGENT)
+        .build()
+        .map_err(|error| format!("创建网络请求客户端失败：{}", error))
+}
+
+fn build_download_client() -> Result<Client, String> {
+    Client::builder()
+        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .user_agent(USER_AGENT)
         .build()
         .map_err(|error| format!("创建网络请求客户端失败：{}", error))
 }
 
 fn get_latest_release_asset_by_owner(owner: &str, repo: &str) -> Result<ReleaseAsset, String> {
-    let client = build_http_client()?;
+    let client = build_api_client()?;
     let mut last_error = String::new();
 
     for api_base in GITHUB_API_MIRRORS {
@@ -187,14 +176,18 @@ fn get_latest_release_asset_by_owner(owner: &str, repo: &str) -> Result<ReleaseA
     Err(format!("获取最新 release 失败（所有镜像均不可用）：{last_error}"))
 }
 
-fn download_asset(download_url: &str, target_path: &Path) -> Result<(), String> {
+fn download_asset(
+    download_url: &str,
+    target_path: &Path,
+    on_progress: &dyn Fn(u64, u64),
+) -> Result<(), String> {
     if let Some(parent) = target_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             format!("创建目录失败：{}（{}）", path_to_string(parent), error)
         })?;
     }
 
-    let client = build_http_client()?;
+    let client = build_download_client()?;
     let mut last_error = String::new();
 
     for mirror_prefix in GITHUB_DOWNLOAD_MIRRORS {
@@ -224,12 +217,31 @@ fn download_asset(download_url: &str, target_path: &Path) -> Result<(), String> 
             continue;
         }
 
+        let total = response
+            .headers()
+            .get(CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+
         let mut file = File::create(target_path).map_err(|error| {
             format!("创建文件失败：{}（{}）", path_to_string(target_path), error)
         })?;
 
-        copy(&mut response, &mut file)
-            .map_err(|error| format!("写入 mods.zip 失败：{}", error))?;
+        let mut downloaded: u64 = 0;
+        let mut buffer = [0u8; 8192];
+        loop {
+            let bytes_read = response
+                .read(&mut buffer)
+                .map_err(|error| format!("读取下载数据失败：{}", error))?;
+            if bytes_read == 0 {
+                break;
+            }
+            file.write_all(&buffer[..bytes_read])
+                .map_err(|error| format!("写入 mods.zip 失败：{}", error))?;
+            downloaded += bytes_read as u64;
+            on_progress(downloaded, total);
+        }
 
         return Ok(());
     }
@@ -237,6 +249,21 @@ fn download_asset(download_url: &str, target_path: &Path) -> Result<(), String> 
     Err(format!(
         "下载 mods.zip 失败（所有镜像均不可用）：{last_error}"
     ))
+}
+
+fn dir_size(path: &Path) -> u64 {
+    let mut total = 0u64;
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                total += dir_size(&p);
+            } else if let Ok(meta) = p.metadata() {
+                total += meta.len();
+            }
+        }
+    }
+    total
 }
 
 fn extract_zip_to_directory(archive_path: &Path, target_directory: &Path) -> Result<(), String> {
@@ -303,50 +330,41 @@ fn resolve_extraction_source(extracted_root: &Path) -> Result<PathBuf, String> {
 
 fn extract_archive_to_mods(archive_path: &Path, game_directory: &Path) -> Result<PathBuf, String> {
     let mods_directory = game_directory.join(MODS_DIR_NAME);
-    let temp_directory = tempdir().map_err(|error| format!("创建临时目录失败：{}", error))?;
-    extract_zip_to_directory(archive_path, temp_directory.path())?;
-
-    let source_root = resolve_extraction_source(temp_directory.path())?;
-    let staged_mods_directory = temp_directory.path().join("staged_mods");
-    fs::create_dir_all(&staged_mods_directory).map_err(|error| {
-        format!("创建目录失败：{}（{}）", path_to_string(&staged_mods_directory), error)
-    })?;
-
-    let mut copied_entries = 0usize;
-    for entry in fs::read_dir(&source_root)
-        .map_err(|error| format!("读取解压目录失败：{}（{}）", path_to_string(&source_root), error))?
-    {
-        let entry = entry.map_err(|error| {
-            format!("读取解压目录项失败：{}（{}）", path_to_string(&source_root), error)
-        })?;
-        let source_path = entry.path();
-        let target_path = staged_mods_directory.join(entry.file_name());
-
-        if source_path.is_dir() {
-            copy_dir_recursive(&source_path, &target_path)?;
-        } else {
-            fs::copy(&source_path, &target_path).map_err(|error| {
-                format!(
-                    "复制文件失败：{} -> {}（{}）",
-                    path_to_string(&source_path),
-                    path_to_string(&target_path),
-                    error
-                )
-            })?;
-        }
-
-        copied_entries += 1;
-    }
-
-    if copied_entries == 0 {
-        return Err("mods.zip 中没有可用内容。".to_string());
-    }
-
+    let extract_directory = game_directory.join("mods.__extract__");
     let incoming_directory = game_directory.join("mods.__incoming__");
     let previous_directory = game_directory.join("mods.__previous__");
 
+    remove_path_if_exists(&extract_directory)?;
+    fs::create_dir_all(&extract_directory).map_err(|error| {
+        format!("创建目录失败：{}（{}）", path_to_string(&extract_directory), error)
+    })?;
+
+    extract_zip_to_directory(archive_path, &extract_directory)?;
+
+    let source_root = resolve_extraction_source(&extract_directory)?;
+
+    let has_content = fs::read_dir(&source_root)
+        .map_err(|error| format!("读取解压目录失败：{}（{}）", path_to_string(&source_root), error))?
+        .next()
+        .is_some();
+    if !has_content {
+        remove_path_if_exists(&extract_directory)?;
+        return Err("mods.zip 中没有可用内容。".to_string());
+    }
+
     remove_path_if_exists(&incoming_directory)?;
-    copy_dir_recursive(&staged_mods_directory, &incoming_directory)?;
+
+    if source_root == extract_directory {
+        fs::rename(&extract_directory, &incoming_directory).map_err(|error| {
+            format!("移动目录失败：{}（{}）", path_to_string(&extract_directory), error)
+        })?;
+    } else {
+        fs::rename(&source_root, &incoming_directory).map_err(|error| {
+            format!("移动目录失败：{}（{}）", path_to_string(&source_root), error)
+        })?;
+        let _ = remove_path_if_exists(&extract_directory);
+    }
+
     remove_path_if_exists(&previous_directory)?;
 
     if mods_directory.exists() {
@@ -496,145 +514,195 @@ pub fn has_backup(game_directory: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub fn backup_mods(game_directory: String) -> Result<String, String> {
-    let game_directory = ensure_game_directory(&game_directory)?;
-    let backup_name = generate_backup_dir_name();
-    let backup_directory = game_directory.join(&backup_name);
-    let mods_directory = game_directory.join(MODS_DIR_NAME);
+pub async fn backup_mods(game_directory: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let game_directory = ensure_game_directory(&game_directory)?;
+        let backup_name = generate_backup_dir_name();
+        let backup_directory = game_directory.join(&backup_name);
+        let mods_directory = game_directory.join(MODS_DIR_NAME);
 
-    fs::create_dir_all(&backup_directory).map_err(|error| {
-        format!("创建目录失败：{}（{}）", path_to_string(&backup_directory), error)
-    })?;
-
-    if mods_directory.exists() {
-        fs::rename(&mods_directory, backup_directory.join(MODS_DIR_NAME)).map_err(|error| {
-            format!(
-                "移动目录失败：{} -> {}（{}）",
-                path_to_string(&mods_directory),
-                path_to_string(&backup_directory.join(MODS_DIR_NAME)),
-                error
-            )
+        fs::create_dir_all(&backup_directory).map_err(|error| {
+            format!("创建目录失败：{}（{}）", path_to_string(&backup_directory), error)
         })?;
-    }
 
-    let zip_files: Vec<_> = fs::read_dir(&game_directory)
-        .map_err(|error| {
-            format!("读取目录失败：{}（{}）", path_to_string(&game_directory), error)
-        })?
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext.eq_ignore_ascii_case("zip"))
-                .unwrap_or(false)
-        })
-        .collect();
-
-    for entry in zip_files {
-        let path = entry.path();
-        let target_path = backup_directory.join(entry.file_name());
-        fs::rename(&path, &target_path).map_err(|error| {
-            format!(
-                "移动文件失败：{} -> {}（{}）",
-                path_to_string(&path),
-                path_to_string(&target_path),
-                error
-            )
-        })?;
-    }
-
-    Ok(format!("已备份到：{}", backup_name))
-}
-
-#[tauri::command]
-pub fn resolve_download_url(url: String) -> Result<String, String> {
-    let trimmed = url.trim();
-    if trimmed.is_empty() {
-        return Err("同步地址不能为空。".to_string());
-    }
-
-    match parse_repository_url(trimmed) {
-        Ok((owner, repo)) => {
-            let asset = get_latest_release_asset_by_owner(&owner, &repo)?;
-            Ok(asset.browser_download_url)
+        if mods_directory.exists() {
+            fs::rename(&mods_directory, backup_directory.join(MODS_DIR_NAME)).map_err(|error| {
+                format!(
+                    "移动目录失败：{} -> {}（{}）",
+                    path_to_string(&mods_directory),
+                    path_to_string(&backup_directory.join(MODS_DIR_NAME)),
+                    error
+                )
+            })?;
         }
-        Err(_) => Ok(trimmed.to_string()),
-    }
+
+        let zip_files: Vec<_> = fs::read_dir(&game_directory)
+            .map_err(|error| {
+                format!("读取目录失败：{}（{}）", path_to_string(&game_directory), error)
+            })?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext.eq_ignore_ascii_case("zip"))
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        for entry in zip_files {
+            let path = entry.path();
+            let target_path = backup_directory.join(entry.file_name());
+            fs::rename(&path, &target_path).map_err(|error| {
+                format!(
+                    "移动文件失败：{} -> {}（{}）",
+                    path_to_string(&path),
+                    path_to_string(&target_path),
+                    error
+                )
+            })?;
+        }
+
+        Ok(format!("已备份到：{}", backup_name))
+    })
+    .await
+    .map_err(|e| format!("任务执行失败：{}", e))?
 }
 
 #[tauri::command]
-pub fn sync_mods(game_directory: String, download_url: String) -> Result<String, String> {
-    let game_directory = ensure_game_directory(&game_directory)?;
-    if !has_backup_directory(&game_directory)? {
-        return Err("请先备份当前 mods 后再同步。".to_string());
-    }
-    let archive_path = game_directory.join(DOWNLOAD_ARCHIVE_NAME);
-    download_asset(&download_url, &archive_path)?;
-    let mods_directory = extract_archive_to_mods(&archive_path, &game_directory)?;
-    Ok(format!(
-        "已下载：{}；已同步到：{}。",
-        path_to_string(&archive_path),
-        path_to_string(&mods_directory)
-    ))
+pub async fn resolve_download_url(url: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let trimmed = url.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("同步地址不能为空。".to_string());
+        }
+
+        match parse_repository_url(&trimmed) {
+            Ok((owner, repo)) => {
+                let asset = get_latest_release_asset_by_owner(&owner, &repo)?;
+                Ok(asset.browser_download_url)
+            }
+            Err(_) => Ok(trimmed),
+        }
+    })
+    .await
+    .map_err(|e| format!("任务执行失败：{}", e))?
 }
 
 #[tauri::command]
-pub fn restore_mods(game_directory: String) -> Result<String, String> {
-    let game_directory = ensure_game_directory(&game_directory)?;
-    let backup_directory = find_latest_backup(&game_directory)?;
-    let mods_directory = game_directory.join(MODS_DIR_NAME);
-    let backup_name = backup_directory
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+pub async fn download_mods(
+    app: tauri::AppHandle,
+    game_directory: String,
+    download_url: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let game_directory = ensure_game_directory(&game_directory)?;
+        if !has_backup_directory(&game_directory)? {
+            return Err("请先备份当前 mods 后再同步。".to_string());
+        }
+        let archive_path = game_directory.join(DOWNLOAD_ARCHIVE_NAME);
 
-    remove_path_if_exists(&mods_directory)?;
+        let _ = app.emit("download-progress", DownloadProgress {
+            downloaded: 0,
+            total: 0,
+            phase: "downloading".to_string(),
+        });
 
-    let items: Vec<PathBuf> = fs::read_dir(&backup_directory)
-        .map_err(|error| format!("读取目录失败：{}（{}）", path_to_string(&backup_directory), error))?
-        .map(|entry| {
-            entry
-                .map(|item| item.path())
-                .map_err(|error| {
-                    format!(
-                        "读取目录项失败：{}（{}）",
-                        path_to_string(&backup_directory),
-                        error
-                    )
-                })
-        })
-        .collect::<Result<_, _>>()?;
+        download_asset(&download_url, &archive_path, &|downloaded, total| {
+            let _ = app.emit("download-progress", DownloadProgress {
+                downloaded,
+                total,
+                phase: "downloading".to_string(),
+            });
+        })?;
 
-    for item in items {
-        let file_name = item
+        let _ = app.emit("download-progress", DownloadProgress {
+            downloaded: 0,
+            total: 0,
+            phase: "done".to_string(),
+        });
+
+        Ok(path_to_string(&archive_path))
+    })
+    .await
+    .map_err(|e| format!("任务执行失败：{}", e))?
+}
+
+#[tauri::command]
+pub async fn extract_mods(game_directory: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let game_directory = ensure_game_directory(&game_directory)?;
+        let archive_path = game_directory.join(DOWNLOAD_ARCHIVE_NAME);
+        if !archive_path.exists() {
+            return Err("未找到 mods.zip，请先下载。".to_string());
+        }
+        let mods_directory = extract_archive_to_mods(&archive_path, &game_directory)?;
+        Ok(path_to_string(&mods_directory))
+    })
+    .await
+    .map_err(|e| format!("任务执行失败：{}", e))?
+}
+
+#[tauri::command]
+pub async fn restore_mods(game_directory: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let game_directory = ensure_game_directory(&game_directory)?;
+        let backup_directory = find_latest_backup(&game_directory)?;
+        let mods_directory = game_directory.join(MODS_DIR_NAME);
+        let backup_name = backup_directory
             .file_name()
-            .ok_or_else(|| "备份目录中存在无效文件名。".to_string())?;
-        let target_path = game_directory.join(file_name);
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
 
-        remove_path_if_exists(&target_path)?;
-        fs::rename(&item, &target_path).map_err(|error| {
-            format!(
-                "移动文件失败：{} -> {}（{}）",
-                path_to_string(&item),
-                path_to_string(&target_path),
-                error
-            )
-        })?;
-    }
+        remove_path_if_exists(&mods_directory)?;
 
-    let is_empty = fs::read_dir(&backup_directory)
-        .map_err(|error| format!("读取目录失败：{}（{}）", path_to_string(&backup_directory), error))?
-        .next()
-        .is_none();
-    if is_empty {
-        fs::remove_dir(&backup_directory).map_err(|error| {
-            format!("删除目录失败：{}（{}）", path_to_string(&backup_directory), error)
-        })?;
-    }
+        let items: Vec<PathBuf> = fs::read_dir(&backup_directory)
+            .map_err(|error| format!("读取目录失败：{}（{}）", path_to_string(&backup_directory), error))?
+            .map(|entry| {
+                entry
+                    .map(|item| item.path())
+                    .map_err(|error| {
+                        format!(
+                            "读取目录项失败：{}（{}）",
+                            path_to_string(&backup_directory),
+                            error
+                        )
+                    })
+            })
+            .collect::<Result<_, _>>()?;
 
-    Ok(format!("已从 {} 还原。", backup_name))
+        for item in items {
+            let file_name = item
+                .file_name()
+                .ok_or_else(|| "备份目录中存在无效文件名。".to_string())?;
+            let target_path = game_directory.join(file_name);
+
+            remove_path_if_exists(&target_path)?;
+            fs::rename(&item, &target_path).map_err(|error| {
+                format!(
+                    "移动文件失败：{} -> {}（{}）",
+                    path_to_string(&item),
+                    path_to_string(&target_path),
+                    error
+                )
+            })?;
+        }
+
+        let is_empty = fs::read_dir(&backup_directory)
+            .map_err(|error| format!("读取目录失败：{}（{}）", path_to_string(&backup_directory), error))?
+            .next()
+            .is_none();
+        if is_empty {
+            fs::remove_dir(&backup_directory).map_err(|error| {
+                format!("删除目录失败：{}（{}）", path_to_string(&backup_directory), error)
+            })?;
+        }
+
+        Ok(format!("已从 {} 还原。", backup_name))
+    })
+    .await
+    .map_err(|e| format!("任务执行失败：{}", e))?
 }
 
 #[tauri::command]
@@ -672,5 +740,55 @@ pub fn open_directory(path: String) -> Result<(), String> {
         .spawn()
         .map_err(|error| format!("打开目录失败：{}", error))?;
 
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn list_backups(game_directory: String) -> Result<Vec<BackupInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let game_directory = ensure_game_directory(&game_directory)?;
+        let backups = find_backup_directories(&game_directory)?;
+        Ok(backups
+            .into_iter()
+            .map(|path| {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let size_bytes = dir_size(&path);
+                BackupInfo { name, size_bytes }
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| format!("任务执行失败：{}", e))?
+}
+
+#[tauri::command]
+pub async fn delete_backup(game_directory: String, backup_name: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let game_directory = ensure_game_directory(&game_directory)?;
+        let backup_name = backup_name.trim();
+        if !backup_name.starts_with(BACKUP_DIR_PREFIX) {
+            return Err("无效的备份目录名称。".to_string());
+        }
+        let backup_path = game_directory.join(backup_name);
+        if !backup_path.exists() || !backup_path.is_dir() {
+            return Err("备份目录不存在。".to_string());
+        }
+        remove_path_if_exists(&backup_path)
+    })
+    .await
+    .map_err(|e| format!("任务执行失败：{}", e))?
+}
+
+#[tauri::command]
+pub fn cleanup_stale_temp(game_directory: String) -> Result<(), String> {
+    let game_directory = ensure_game_directory(&game_directory)?;
+    let stale_dirs = ["mods.__extract__", "mods.__incoming__", "mods.__previous__"];
+    for name in stale_dirs {
+        let path = game_directory.join(name);
+        remove_path_if_exists(&path)?;
+    }
     Ok(())
 }

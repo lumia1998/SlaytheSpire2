@@ -1,8 +1,8 @@
 mod commands;
 
 use commands::{
-    backup_mods, detect_game_directory, has_backup, open_directory, resolve_download_url,
-    restore_mods, sync_mods,
+    backup_mods, cleanup_stale_temp, delete_backup, detect_game_directory, download_mods,
+    extract_mods, has_backup, list_backups, open_directory, resolve_download_url, restore_mods,
 };
 use tauri::Manager;
 
@@ -25,10 +25,14 @@ pub fn run() {
             detect_game_directory,
             has_backup,
             backup_mods,
-            sync_mods,
+            download_mods,
+            extract_mods,
             resolve_download_url,
             restore_mods,
             open_directory,
+            list_backups,
+            delete_backup,
+            cleanup_stale_temp,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
