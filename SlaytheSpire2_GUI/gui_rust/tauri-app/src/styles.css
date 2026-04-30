@@ -1,0 +1,375 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  color: #1e293b;
+  background: transparent;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 980px;
+  min-height: 720px;
+  background: transparent;
+  overflow: hidden;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: none;
+}
+
+.app-shell {
+  height: 100vh;
+  max-height: 100vh;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: rgba(243, 245, 249, 0.94);
+  overflow: hidden;
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 16px;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.07);
+}
+
+.header-card {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 16px 28px;
+}
+
+.icon-badge {
+  width: 52px;
+  height: 52px;
+  flex: 0 0 52px;
+  display: grid;
+  place-items: center;
+  background: rgba(241, 245, 249, 0.6);
+  border: 1px solid rgba(203, 213, 225, 0.4);
+  border-radius: 14px;
+}
+
+.app-icon {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+}
+
+.header-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.header-copy h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.header-copy p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #64748b;
+}
+
+.settings-card {
+  padding: 20px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.repo-group {
+  gap: 8px;
+}
+
+.section-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.path-row {
+  display: flex;
+  gap: 10px;
+}
+
+.text-input {
+  height: 44px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: #1e293b;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(203, 213, 225, 0.6);
+  border-radius: 10px;
+  outline: none;
+  transition: border-color 0.18s ease, background-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.text-input::placeholder {
+  color: #94a3b8;
+}
+
+.text-input:focus {
+  border-color: rgba(99, 102, 241, 0.55);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+.action-button {
+  position: relative;
+  height: 44px;
+  flex: 0 0 auto;
+  padding: 0 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background-color 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
+}
+
+.secondary-button {
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(203, 213, 225, 0.5);
+}
+
+.secondary-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
+.secondary-button:active:not(:disabled) {
+  transform: translateY(1px);
+  background: rgba(226, 232, 240, 0.8);
+}
+
+.operation-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.operation-grid.two-col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.operation-card {
+  position: relative;
+  min-height: 56px;
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  cursor: pointer;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(203, 213, 225, 0.45);
+  transition: border-color 0.18s ease, background-color 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
+}
+
+.operation-card:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(99, 102, 241, 0.3);
+}
+
+.operation-card:active:not(:disabled) {
+  transform: translateY(1px);
+  background: rgba(238, 242, 255, 0.8);
+}
+
+.operation-icon {
+  font-size: 20px;
+  line-height: 1;
+  color: #6366f1;
+}
+
+.operation-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.operation-desc {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.log-card {
+  flex: 1;
+  min-height: 0;
+  padding: 16px 28px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.log-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.log-clear-button {
+  height: 36px;
+  padding: 0 14px;
+}
+
+.log-output {
+  width: 100%;
+  flex: 1;
+  min-height: 120px;
+  resize: none;
+  padding: 14px;
+  border: 1px solid rgba(30, 41, 59, 0.8);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #cbd5e1;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  outline: none;
+}
+
+.log-output::selection {
+  background: rgba(99, 102, 241, 0.35);
+}
+
+.action-button:disabled,
+.operation-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.76;
+}
+
+.secondary-button:disabled {
+  background: rgba(241, 245, 249, 0.5);
+  border-color: rgba(229, 231, 235, 0.7);
+  color: #9ca3af;
+}
+
+.operation-card:disabled {
+  background: rgba(243, 244, 246, 0.5);
+  border-color: rgba(229, 231, 235, 0.6);
+}
+
+.action-button.is-loading::after,
+.operation-card.is-loading::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: 50%;
+  border: 2px solid rgba(99, 102, 241, 0.18);
+  border-top-color: rgba(99, 102, 241, 0.9);
+  animation: spin 0.8s linear infinite;
+}
+
+.operation-card.is-loading::after {
+  right: 14px;
+}
+
+.repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.repo-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.repo-note-input {
+  width: 120px;
+  flex: 0 0 120px;
+}
+
+.repo-url-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.repo-sync-button {
+  flex: 0 0 auto;
+}
+
+.repo-delete-button {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  color: #94a3b8;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: color 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
+}
+
+.repo-delete-button:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.06);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.add-repo-button {
+  width: 100%;
+  text-align: center;
+  height: 40px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

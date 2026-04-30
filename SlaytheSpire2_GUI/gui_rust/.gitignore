@@ -1,0 +1,3 @@
+src-tauri/target/
+SlayTheSpire2ModManager.exe
+*.pdb

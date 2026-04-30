@@ -17,8 +17,40 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Package repository
-        id: package
+      - name: Build Rust GUI
+        id: build_gui
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $repoRoot = $env:GITHUB_WORKSPACE
+          $guiRoot = Join-Path $repoRoot 'SlaytheSpire2_GUI/gui_rust/tauri-app/src-tauri'
+          $binaryPath = Join-Path $guiRoot 'target/release/slay-the-spire-2-mod-manager.exe'
+          $artifactRoot = Join-Path $env:RUNNER_TEMP 'mods-artifact'
+          $exePath = Join-Path $artifactRoot 'SlayTheSpire2ModManager.exe'
+
+          if (Test-Path $artifactRoot) {
+            Remove-Item -Path $artifactRoot -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
+
+          Push-Location $guiRoot
+          try {
+            cargo build --release
+          }
+          finally {
+            Pop-Location
+          }
+
+          if (-not (Test-Path $binaryPath)) {
+            throw "GUI executable not found: $binaryPath"
+          }
+
+          Copy-Item -Path $binaryPath -Destination $exePath -Force
+          "exe_path=$exePath" >> $env:GITHUB_OUTPUT
+
+      - name: Package mods.zip
+        id: package_mods
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -27,18 +59,16 @@ jobs:
           $stageRoot = Join-Path $env:RUNNER_TEMP 'mods-package'
           $artifactRoot = Join-Path $env:RUNNER_TEMP 'mods-artifact'
           $zipPath = Join-Path $artifactRoot 'mods.zip'
+          $excludedNames = @('.git', '.github', 'SlaytheSpire2_GUI')
 
-          foreach ($path in @($stageRoot, $artifactRoot)) {
-            if (Test-Path $path) {
-              Remove-Item -Path $path -Recurse -Force
-            }
+          if (Test-Path $stageRoot) {
+            Remove-Item -Path $stageRoot -Recurse -Force
           }
-
           New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
           New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
 
           Get-ChildItem -Path $repoRoot -Force | Where-Object {
-            $_.Name -notin @('.git', '.github')
+            ($excludedNames -notcontains $_.Name) -and ($_.Name -notmatch '^(?i)readme(\..+)?$')
           } | ForEach-Object {
             Copy-Item -Path $_.FullName -Destination (Join-Path $stageRoot $_.Name) -Recurse -Force
           }
@@ -46,6 +76,10 @@ jobs:
           $items = Get-ChildItem -Path $stageRoot -Force
           if (-not $items) {
             throw 'The package directory is empty.'
+          }
+
+          if (Test-Path $zipPath) {
+            Remove-Item -Path $zipPath -Force
           }
 
           Compress-Archive -Path $items.FullName -DestinationPath $zipPath -Force
@@ -58,4 +92,6 @@ jobs:
           name: Auto Release #${{ github.run_number }}
           body: |
             Automated release for commit ${{ github.sha }}.
-          files: ${{ steps.package.outputs.zip_path }}
+          files: |
+            ${{ steps.build_gui.outputs.exe_path }}
+            ${{ steps.package_mods.outputs.zip_path }}

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Slay the Spire 2 Mod Manager</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./main.js" defer></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="card header-card">
+        <div class="icon-badge" aria-hidden="true">
+          <img src="./icon.png" alt="" class="app-icon" />
+        </div>
+        <div class="header-copy">
+          <h1>Slay the Spire 2 Mod Manager</h1>
+        </div>
+      </section>
+
+      <section class="card settings-card">
+        <div class="field-group">
+          <label for="gamePath" class="section-title">游戏路径</label>
+          <div class="path-row">
+            <input
+              id="gamePath"
+              type="text"
+              class="text-input"
+              placeholder="例如 E:\Steam\steamapps\common\Slay the Spire 2"
+              autocomplete="off"
+            />
+            <button id="savePathButton" type="button" class="action-button secondary-button">
+              <span class="button-label">选择路径</span>
+            </button>
+            <button id="openDirectoryButton" type="button" class="action-button secondary-button">
+              <span class="button-label">打开目录</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="operation-grid two-col">
+          <button
+            id="backupButton"
+            type="button"
+            class="operation-card"
+            title="备份当前模组到 mods_backup 文件夹"
+          >
+            <span class="operation-title">备份</span>
+            <span class="operation-desc">备份当前模组到 mods_backup 文件夹</span>
+          </button>
+
+          <button
+            id="restoreButton"
+            type="button"
+            class="operation-card"
+            title="从 mods_backup 文件夹还原"
+          >
+            <span class="operation-title">还原</span>
+            <span class="operation-desc">从 mods_backup 文件夹还原</span>
+          </button>
+        </div>
+
+        <div class="field-group">
+          <span class="section-title">同步源</span>
+          <div id="repoList" class="repo-list"></div>
+          <button id="addRepoButton" type="button" class="action-button secondary-button add-repo-button">
+            添加
+          </button>
+        </div>
+      </section>
+
+      <section class="card log-card">
+        <div class="log-header-row">
+          <label for="logOutput" class="section-title">运行日志</label>
+          <button id="clearLogButton" type="button" class="action-button secondary-button log-clear-button">
+            清空日志
+          </button>
+        </div>
+        <textarea id="logOutput" class="log-output" readonly spellcheck="false"></textarea>
+      </section>
+    </main>
+  </body>
+</html>
